@@ -390,20 +390,23 @@ async def _send_to_user(
     text: str,
     last_alert: dict,
     *,
+    cooldown_key: object = None,
     bypass_cooldown: bool = False,
 ) -> None:
+    key = cooldown_key if cooldown_key is not None else uid
     now = time.monotonic()
-    if not bypass_cooldown and now - last_alert.get(uid, 0) < ALERT_COOLDOWN:
-        log.info("cooldown active for user %s — message suppressed", uid)
+    if not bypass_cooldown and now - last_alert.get(key, 0) < ALERT_COOLDOWN:
+        log.info("cooldown active for %s — message suppressed", key)
         return
     await bot.send_message(uid, text, parse_mode=ParseMode.HTML)
-    last_alert[uid] = now
+    last_alert[key] = now
 
 
 async def _monitor(app: Application) -> None:
     # was_open[uid][net_key] = bool
     was_open:   dict[int, dict[str, bool]] = {}
-    last_alert: dict[int, float]           = {}
+    # last_alert keyed by (uid, net_key) for per-network cooldown
+    last_alert: dict[object, float]        = {}
     fail_streak:  dict[str, int]           = {k: 0 for k in NETWORKS}
     fail_alerted: dict[str, bool]          = {k: False for k in NETWORKS}
 
@@ -483,12 +486,14 @@ async def _monitor(app: Application) -> None:
                         app.bot, uid,
                         t(lang, "alert_open", label=label, threshold=thr, free=free),
                         last_alert,
+                        cooldown_key=(uid, net_key),
                     )
                 elif prev_open and not is_open:
                     await _send_to_user(
                         app.bot, uid,
                         t(lang, "alert_closed", label=label, threshold=thr, free=free),
                         last_alert,
+                        cooldown_key=(uid, net_key),
                     )
 
                 was_open[uid][net_key] = is_open
