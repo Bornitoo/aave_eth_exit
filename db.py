@@ -8,16 +8,20 @@ users
   username       TEXT
   first_name     TEXT
   lang           TEXT    DEFAULT 'ru'
-  threshold      TEXT    DEFAULT '1'
+  threshold      TEXT    DEFAULT '1000'
+  networks       TEXT    DEFAULT '["mantle"]'  (JSON array of network keys)
   first_seen_at  TEXT    (ISO-8601 UTC)
   subscribed_at  TEXT    (ISO-8601 UTC, NULL until confirmed)
   admin_notified INTEGER DEFAULT 0
 """
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 DB_FILE = Path("users.db")
+
+DEFAULT_NETWORKS = ["mantle"]
 
 
 def _now() -> str:
@@ -42,11 +46,17 @@ def init() -> None:
                 first_name     TEXT,
                 lang           TEXT    NOT NULL DEFAULT 'ru',
                 threshold      TEXT    NOT NULL DEFAULT '1000',
+                networks       TEXT    NOT NULL DEFAULT '["mantle"]',
                 first_seen_at  TEXT    NOT NULL,
                 subscribed_at  TEXT,
                 admin_notified INTEGER NOT NULL DEFAULT 0
             )
         """)
+        # migrate existing tables that lack the networks column
+        try:
+            con.execute('ALTER TABLE users ADD COLUMN networks TEXT NOT NULL DEFAULT \'["mantle"]\'')
+        except sqlite3.OperationalError:
+            pass
         con.commit()
 
 
@@ -76,7 +86,6 @@ def upsert(user_id: int, username: str | None, first_name: str | None) -> bool:
 
 
 def set_subscribed(user_id: int) -> None:
-    """Record subscription timestamp (only on first confirmation)."""
     with _con() as con:
         con.execute(
             "UPDATE users SET subscribed_at=? WHERE user_id=? AND subscribed_at IS NULL",
@@ -107,6 +116,15 @@ def set_threshold(user_id: int, threshold: str) -> None:
         con.commit()
 
 
+def set_networks(user_id: int, networks: list[str]) -> None:
+    with _con() as con:
+        con.execute(
+            "UPDATE users SET networks=? WHERE user_id=?",
+            (json.dumps(networks), user_id),
+        )
+        con.commit()
+
+
 # ── Read ──────────────────────────────────────────────────────────────────────
 
 
@@ -116,6 +134,16 @@ def get(user_id: int) -> dict | None:
             "SELECT * FROM users WHERE user_id=?", (user_id,)
         ).fetchone()
         return dict(row) if row else None
+
+
+def get_networks(user_id: int) -> list[str]:
+    row = get(user_id)
+    if not row or not row.get("networks"):
+        return list(DEFAULT_NETWORKS)
+    try:
+        return json.loads(row["networks"])
+    except (json.JSONDecodeError, TypeError):
+        return list(DEFAULT_NETWORKS)
 
 
 def active_users() -> list[dict]:
