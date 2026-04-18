@@ -1,351 +1,113 @@
-# Aave Mantle WETH Isolation Monitor
+# Aave Mantle WETH Isolation Monitor Bot
 
-Монитор для отслеживания свободного места в **Aave V3 Mantle WETH Isolated Debt Ceiling** с отправкой Telegram-алертов при открытии и закрытии окна свободной ёмкости.
+Telegram-бот для мониторинга свободной ёмкости **WETH Isolated Debt Ceiling** на [Aave (Mantle)](https://app.aave.com/).
 
-## Что делает бот
-
-Бот в цикле опрашивает Aave GraphQL API, получает текущее состояние `WETH`-резерва в Mantle и считает:
-
-- общий `debt ceiling` в USD,
-- текущий объём занятых заимствований в USD,
-- остаток свободного места (`free_usd`).
-
-После этого он определяет состояние рынка относительно заданных порогов и отправляет сообщения в Telegram только при **смене состояния**.
-
-Сейчас логика такая:
-
-- если свободное место стало **>= порога открытия**, бот шлёт alert, что окно открылось,
-- если после этого свободное место падает **ниже порога закрытия**, бот шлёт alert, что окно снова закрылось,
-- если API начинает сбоить, бот считает подряд неудачные попытки,
-- после 10 неудачных проверок подряд шлёт alert о проблеме,
-- после восстановления доступа к данным шлёт recovery-alert.
-
-Это значит, что бот не спамит на каждом тике, а сообщает именно о значимых переходах.
+A Telegram bot that monitors free capacity in the **WETH Isolated Debt Ceiling** on [Aave (Mantle)](https://app.aave.com/).
 
 ---
 
-## Что именно мониторится
+## Как работает / How it works
 
-Источник данных:
+Бот каждые 10 секунд запрашивает данные через Aave GraphQL API и сравнивает свободную ёмкость с порогом каждого пользователя.
 
-- **Aave GraphQL API**: `https://api.v3.aave.com/graphql`
+The bot polls the Aave GraphQL API every 10 seconds and compares free capacity against each user's threshold.
 
-Сеть и рынок:
+| Событие / Event | Алерт / Alert |
+|---|---|
+| `free ≥ threshold` (переход / transition) | 🚨 Место есть / Capacity Available |
+| `free < threshold` (переход / transition) | 🔒 Место закончилось / Capacity Filled |
 
-- **Chain ID:** `5000` (Mantle)
-- **Market:** `0x458F293454fE0d67EC0655f3672301301DD51422`
-- **Underlying token:** `0xdeaddeaddeaddeaddeaddeaddeaddeaddead1111`
-- **Token symbol:** `WETH`
-
-Бот использует GraphQL-запрос к `reserve`, затем читает из `isolationModeConfig`:
-
-- `debtCeiling.usd`
-- `totalBorrows.usd`
-- `debtCeilingDecimals`
-
-Итоговая свободная ёмкость считается так:
-
-```text
-free_usd = debt_usd - borrowed_usd
-```
+Каждый переход срабатывает **ровно 1 раз** — без спама.
+Each transition fires **exactly once** — no spam.
 
 ---
 
-## Основные сценарии алертов
+## Функции / Features
 
-### 1. Открытие окна
-
-Если:
-
-```text
-free_usd >= min_free_usd
-```
-
-и до этого бот считал, что окно закрыто, отправляется сообщение вида:
-
-```text
-⚠️ Aave Mantle WETH Isolated: свободное место появилось
-Порог открытия: $500.00
-Занято: $29998891.17 / $30000000.00
-Свободно: $1108.83
-```
-
-### 2. Закрытие окна
-
-Если ранее окно было открыто, а потом:
-
-```text
-free_usd < close_threshold_usd
-```
-
-бот отправляет сообщение вида:
-
-```text
-ℹ️ Aave Mantle WETH Isolated: свободное место снова закончилось
-Порог закрытия: < $100.00
-Занято: $29999988.63 / $30000000.00
-Свободно: $11.37
-```
-
-### 3. Ошибка API
-
-Если бот 10 раз подряд не смог получить данные:
-
-```text
-⚠️ Aave monitor: 10 проверок подряд не удалось получить данные по WETH Isolated Debt Ceiling.
-```
-
-### 4. Восстановление после ошибок
-
-Когда после серии ошибок API снова отвечает нормально:
-
-```text
-✅ Aave monitor: снова удалось получать данные по WETH Isolated Debt Ceiling.
-```
+- 🔒 Доступ только для подписчиков канала `@qrqlcrypto`
+- 🌍 Два языка: русский и английский
+- 🎯 Индивидуальный порог уведомлений для каждого пользователя (по умолчанию $1,000)
+- 📊 Кнопка статуса с индикатором 🟢/🔴
+- 🗄️ SQLite база данных пользователей (дата входа, порог, язык)
+- 🤖 Уведомление админа о каждом новом пользователе и при перезапуске
+- ⚡ Systemd-сервис с автозапуском
 
 ---
 
-## Почему два порога, а не один
-
-Используются два разных порога:
-
-- `min_free_usd` — порог открытия окна,
-- `close_threshold_usd` — порог закрытия.
-
-Это сделано для простого гистерезиса, чтобы бот не дёргался около одного и того же значения.
-
-Пример:
-
-- окно открывается при `>= 500 USD`,
-- окно считается закрытым только при `< 100 USD`.
-
-Такой подход убирает лишнюю болтанку в районе границы и делает алерты заметно чище.
-
----
-
-## Текущая боевая конфигурация
-
-Сервис сейчас запускается так:
-
-```ini
-ExecStart=/usr/bin/python3 /home/tester01/.openclaw/workspace/aave_weth_isolation_monitor.py --interval 10 --chat-id 231918072 --min-free-usd 500 --cooldown 5
-```
-
-Это означает:
-
-- интервал проверки: **10 секунд**,
-- Telegram chat id: `231918072`,
-- порог открытия: **500 USD**,
-- `cooldown`: **5 секунд**.
-
-Важно: в текущей версии параметр `--cooldown` уже пробрасывается, но внутри логики почти не участвует, потому что бот работает в режиме алертов по смене состояния, а не по периодическому повтору сообщений.
-
----
-
-## Аргументы CLI
-
-Бот поддерживает следующие аргументы:
-
-### `--interval`
-Как часто опрашивать Aave API.
-
-Пример:
+## Установка / Setup
 
 ```bash
---interval 10
+git clone https://github.com/Bornitoo/aave_mantle_bot.git
+cd aave_mantle_bot
+pip install -r requirements.txt
+cp settings.env.example settings.env
+# заполни settings.env / fill in settings.env
 ```
 
-### `--chat-id`
-Куда отправлять Telegram-алерты через OpenClaw.
-
-Пример:
+### systemd
 
 ```bash
---chat-id 231918072
+cp aave-weth-isolation-monitor.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now aave-weth-isolation-monitor.service
 ```
 
-### `--min-free-usd`
-Порог, начиная с которого считается, что свободное окно появилось.
-
-Пример:
-
+Логи / Logs:
 ```bash
---min-free-usd 500
-```
-
-### `--close-threshold-usd`
-Порог, ниже которого окно считается снова закрытым.
-
-По умолчанию:
-
-```bash
---close-threshold-usd 100
-```
-
-### `--cooldown`
-Параметр оставлен в интерфейсе запуска. Исторически использовался для ограничения частоты алертов.
-
-### `--once`
-Один раз запросить текущее состояние, вывести строку в stdout и завершиться.
-
-Пример:
-
-```bash
-python3 aave_weth_isolation_monitor.py --once
+journalctl -u aave-weth-isolation-monitor.service -f
 ```
 
 ---
 
-## Пример ручного запуска
+## Конфигурация / Configuration (`settings.env`)
 
-```bash
-python3 /home/tester01/.openclaw/workspace/aave_weth_isolation_monitor.py \
-  --interval 10 \
-  --chat-id 231918072 \
-  --min-free-usd 500 \
-  --close-threshold-usd 100
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | — | Токен бота от @BotFather |
+| `ADMIN_ID` | `231918072` | Telegram ID администратора |
+| `REQUIRED_CHANNEL` | `@qrqlcrypto` | Канал для проверки подписки |
+| `CHECK_INTERVAL` | `10` | Интервал опроса Aave (сек) |
+| `DEFAULT_MIN_FREE_USD` | `1000` | Порог по умолчанию для новых пользователей |
+| `FAIL_ALERT_AFTER` | `10` | Ошибок подряд до алерта об ошибке |
+| `ALERT_COOLDOWN_SEC` | `5` | Минимальный интервал между алертами (сек) |
+
+---
+
+## Структура / Structure
+
 ```
-
-Одноразовая проверка:
-
-```bash
-python3 /home/tester01/.openclaw/workspace/aave_weth_isolation_monitor.py --once
+├── bot.py          # Telegram bot (handlers + monitor loop)
+├── monitor.py      # Aave GraphQL fetcher
+├── db.py           # SQLite user storage
+├── i18n/
+│   ├── __init__.py # t(lang, key) helper
+│   ├── ru.py       # Russian strings
+│   └── en.py       # English strings
+├── settings.env.example
+└── aave-weth-isolation-monitor.service
 ```
 
 ---
 
-## Systemd unit
+## Кнопки бота / Bot buttons
 
-Текущий unit-файл:
-
-```ini
-[Unit]
-Description=Aave Mantle WETH Isolated Debt Ceiling monitor
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /home/tester01/.openclaw/workspace/aave_weth_isolation_monitor.py --interval 10 --chat-id 231918072 --min-free-usd 500 --cooldown 5
-Restart=always
-RestartSec=5
-WorkingDirectory=/home/tester01/.openclaw/workspace
-
-[Install]
-WantedBy=default.target
+```
+[ 📊 Статус ]  [ 🎯 Порог уведомлений ]  [ ❓ Помощь ]  [ 🇬🇧 EN ]
 ```
 
-Если нужен отдельный проектный репозиторий, обычно достаточно положить рядом:
-
-- `aave_weth_isolation_monitor.py`
-- `README.md`
-- `aave-weth-isolation-monitor.service`
-- при желании `requirements.txt`
+- **📊 Статус** — текущее состояние пула в реальном времени
+- **🎯 Порог уведомлений** — настройка суммы для алерта
+- **❓ Помощь** — подробная справка
+- **🇬🇧 EN / 🇷🇺 RU** — переключение языка
 
 ---
 
-## Зависимости
+## Требования / Requirements
 
-Минимально нужны:
-
-- Python 3
+- Python 3.11+
+- `python-telegram-bot==21.6`
 - `requests`
-- локальный установленный `openclaw`, если алерты шлются через него
+- `python-dotenv`
 
-Фактически бот импортирует:
-
-- `argparse`
-- `json`
-- `subprocess`
-- `sys`
-- `time`
-- `decimal.Decimal`
-- `requests`
-
-Если выносить проект в отдельный репозиторий, можно использовать такой `requirements.txt`:
-
-```txt
-requests>=2.31.0
-```
-
----
-
-## Как бот отправляет алерты
-
-Алерты сейчас идут не напрямую через Telegram Bot API, а через локальный OpenClaw:
-
-```bash
-openclaw message send --channel telegram --target <chat_id> --message <text>
-```
-
-Это значит, что для работы уведомлений на машине должны быть:
-
-- установлен OpenClaw,
-- настроен Telegram-канал/бот,
-- доступен `openclaw` по пути:
-
-```text
-/home/tester01/.local/bin/openclaw
-```
-
-Если хочется сделать бот полностью автономным, этот участок можно заменить на прямую отправку в Telegram Bot API.
-
----
-
-## Поведение при ошибках
-
-Если API временно отваливается:
-
-- бот не падает сразу,
-- пишет ошибку в stderr,
-- продолжает опрос,
-- после 10 подряд провалов шлёт alert,
-- при восстановлении шлёт recovery.
-
-Такой режим удобен для продового процесса под systemd: даже при временных сетевых сбоях сервис не надо поднимать вручную.
-
----
-
-## Что можно улучшить дальше
-
-Если развивать проект, полезно добавить:
-
-1. **Логи в файл** через systemd `StandardOutput/StandardError`.
-2. **SQLite-историю**, если захочется график по свободной ёмкости.
-3. **Отдельный стартовый alert**, если нужно подтверждение запуска.
-4. **Настоящий cooldown**, если появится режим повторных reminder-алертов.
-5. **ENV-конфиг**, чтобы не хардкодить `chat-id` и путь к `openclaw`.
-6. **Unit-файл внутри репозитория**, а не только в `~/.config/systemd/user/`.
-7. **Прямую интеграцию с Telegram API**, если бот будет разворачиваться без OpenClaw.
-8. **Healthcheck endpoint** или heartbeat-файл для внешнего мониторинга.
-
----
-
-## Структура проекта, которую я бы рекомендовал для отдельного репо
-
-```text
-aave-mantle-weth-isolation-monitor/
-├── README.md
-├── aave_weth_isolation_monitor.py
-├── requirements.txt
-└── deploy/
-    └── aave-weth-isolation-monitor.service
-```
-
----
-
-## Кратко
-
-Это бот, который следит за свободным местом в **Aave Mantle WETH Isolated Debt Ceiling** и шлёт Telegram-алерты, когда:
-
-- окно свободной ёмкости открылось,
-- окно снова закрылось,
-- Aave API начал сбоить,
-- Aave API восстановился.
-
-Текущий рабочий режим:
-
-- проверка каждые **10 секунд**,
-- порог открытия **500 USD**,
-- порог закрытия **100 USD**,
-- доставка алертов через **OpenClaw → Telegram**.
+> Бот должен быть добавлен в канал `@qrqlcrypto` для проверки подписок.
+> The bot must be a member of `@qrqlcrypto` to verify subscriptions.

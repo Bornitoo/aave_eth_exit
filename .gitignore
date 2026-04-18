@@ -1,0 +1,6 @@
+settings.env
+users.db
+state.json
+__pycache__/
+*.pyc
+.env

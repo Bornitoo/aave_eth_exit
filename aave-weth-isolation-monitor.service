@@ -1,14 +1,18 @@
 [Unit]
-Description=Aave Mantle WETH Isolated Debt Ceiling monitor
+Description=Aave Mantle WETH Isolation Monitor Bot
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/aave-mantle-bot/aave_weth_isolation_monitor.py --interval 10 --chat-id 231918072 --min-free-usd 500 --cooldown 5
+User=root
+WorkingDirectory=/root/aave-mantle-bot
+EnvironmentFile=/root/aave-mantle-bot/settings.env
+ExecStart=/usr/bin/python3 /root/aave-mantle-bot/bot.py
 Restart=always
-RestartSec=5
-WorkingDirectory=/opt/aave-mantle-bot
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
