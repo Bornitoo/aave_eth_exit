@@ -10,9 +10,9 @@ A Telegram bot that monitors available **WETH** borrow liquidity on [Aave](https
 
 ## Как работает / How it works
 
-Бот каждые 10 секунд запрашивает данные через Aave GraphQL API и сравнивает доступную ликвидность с порогом каждого пользователя по каждому выбранному блокчейну.
+Бот каждые 5 секунд запрашивает данные через Aave GraphQL API и сравнивает доступную ликвидность с порогом каждого пользователя по каждому выбранному блокчейну.
 
-The bot polls the Aave GraphQL API every 10 seconds and compares available liquidity against each user's threshold for each selected blockchain.
+The bot polls the Aave GraphQL API every 5 seconds and compares available liquidity against each user's threshold for each selected blockchain.
 
 | Событие / Event | Алерт / Alert |
 |---|---|
