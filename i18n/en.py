@@ -28,7 +28,7 @@ STRINGS = {
         "<b>🌍 Language</b>\n"
         "Switch the interface language with the <b>🇬🇧 EN / 🇷🇺 RU</b> button.\n\n"
 
-        "Support: @bornito"
+        "Support: @qrqlcrypto"
     ),
 
     # ── Subscription gate ─────────────────────────────────────────────────────

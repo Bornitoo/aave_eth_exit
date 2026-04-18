@@ -412,13 +412,14 @@ async def _post_init(app: Application) -> None:
     db.init()
     try:
         await app.bot.set_my_description(
-            "Мониторю WETH Isolated Debt Ceiling на Aave (Mantle) и сообщаю, "
-            "когда появляется свободное место.\n\n"
-            "I monitor the WETH Isolated Debt Ceiling on Aave (Mantle) "
-            "and alert you when capacity becomes available."
+            "Мониторю свободную ликвидность в WETH Isolated Debt Ceiling на Aave (Mantle) "
+            "и уведомляю, как только появляется доступное место.\n\n"
+            "I monitor free liquidity in the WETH Isolated Debt Ceiling on Aave (Mantle) "
+            "and alert you when capacity becomes available.\n\n"
+            "По вопросам / Support: @qrqlcrypto"
         )
         await app.bot.set_my_short_description(
-            "Aave Mantle WETH Isolation Monitor — уведомления о свободной ёмкости / capacity alerts"
+            "Aave Mantle WETH Isolation Monitor — уведомления о свободной ликвидности / liquidity alerts"
         )
     except Exception as exc:
         log.warning("set description failed: %s", exc)

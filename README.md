@@ -1,24 +1,26 @@
 # Aave Mantle WETH Isolation Monitor Bot
 
-Telegram-бот для мониторинга свободной ёмкости **WETH Isolated Debt Ceiling** на [Aave (Mantle)](https://app.aave.com/).
+Telegram-бот для мониторинга свободной ликвидности **WETH Isolated Debt Ceiling** на [Aave (Mantle)](https://app.aave.com/).
 
-A Telegram bot that monitors free capacity in the **WETH Isolated Debt Ceiling** on [Aave (Mantle)](https://app.aave.com/).
+A Telegram bot that monitors free liquidity in the **WETH Isolated Debt Ceiling** on [Aave (Mantle)](https://app.aave.com/).
+
+По вопросам / Support: @qrqlcrypto
 
 ---
 
 ## Как работает / How it works
 
-Бот каждые 10 секунд запрашивает данные через Aave GraphQL API и сравнивает свободную ёмкость с порогом каждого пользователя.
+Бот каждые 10 секунд запрашивает данные через Aave GraphQL API и сравнивает свободную ликвидность с порогом каждого пользователя.
 
-The bot polls the Aave GraphQL API every 10 seconds and compares free capacity against each user's threshold.
+The bot polls the Aave GraphQL API every 10 seconds and compares free liquidity against each user's threshold.
 
 | Событие / Event | Алерт / Alert |
 |---|---|
 | `free ≥ threshold` (переход / transition) | 🚨 Место есть / Capacity Available |
 | `free < threshold` (переход / transition) | 🔒 Место закончилось / Capacity Filled |
 
-Каждый переход срабатывает **ровно 1 раз** — без спама.
-Each transition fires **exactly once** — no spam.
+Каждый переход срабатывает **ровно один раз**.  
+Each transition fires **exactly once**.
 
 ---
 
@@ -28,6 +30,7 @@ Each transition fires **exactly once** — no spam.
 - 🌍 Два языка: русский и английский
 - 🎯 Индивидуальный порог уведомлений для каждого пользователя (по умолчанию $1,000)
 - 📊 Кнопка статуса с индикатором 🟢/🔴
+- ❓ Кнопка помощи со справкой на двух языках
 - 🗄️ SQLite база данных пользователей (дата входа, порог, язык)
 - 🤖 Уведомление админа о каждом новом пользователе и при перезапуске
 - ⚡ Systemd-сервис с автозапуском
@@ -97,7 +100,7 @@ journalctl -u aave-weth-isolation-monitor.service -f
 
 - **📊 Статус** — текущее состояние пула в реальном времени
 - **🎯 Порог уведомлений** — настройка суммы для алерта
-- **❓ Помощь** — подробная справка
+- **❓ Помощь** — подробная справка на двух языках
 - **🇬🇧 EN / 🇷🇺 RU** — переключение языка
 
 ---
@@ -109,5 +112,5 @@ journalctl -u aave-weth-isolation-monitor.service -f
 - `requests`
 - `python-dotenv`
 
-> Бот должен быть добавлен в канал `@qrqlcrypto` для проверки подписок.
+> Бот должен быть добавлен в канал `@qrqlcrypto` для проверки подписок.  
 > The bot must be a member of `@qrqlcrypto` to verify subscriptions.
