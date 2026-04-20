@@ -379,27 +379,36 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply = t(lang, "status_no_assets")
         else:
             sel_set = set(selections)
-            rows    = [t(lang, "status_header")]
+            pairs = [
+                (nk, ak)
+                for nk, net_cfg in NETWORKS.items()
+                for ak in net_cfg["assets"]
+                if f"{nk}:{ak}" in sel_set
+            ]
+            raw = await asyncio.gather(
+                *[asyncio.to_thread(fetch_state, nk, ak) for nk, ak in pairs],
+                return_exceptions=True,
+            )
+            state_map = dict(zip(pairs, raw))
+
+            rows = [t(lang, "status_header")]
             for net_key, net_cfg in NETWORKS.items():
-                net_assets = [
-                    ak for ak in net_cfg["assets"]
-                    if f"{net_key}:{ak}" in sel_set
-                ]
+                net_assets = [ak for ak in net_cfg["assets"] if f"{net_key}:{ak}" in sel_set]
                 if not net_assets:
                     continue
                 rows.append(t(lang, "status_net_row", net_label=net_cfg["label"]))
                 for asset_key in net_assets:
-                    try:
-                        s = fetch_state(net_key, asset_key)
-                        indicator = "🟢" if s["available_usd"] >= thr else "🔴"
+                    result = state_map.get((net_key, asset_key))
+                    if isinstance(result, Exception) or result is None:
+                        asset_label = net_cfg["assets"][asset_key]["label"]
+                        rows.append(f"  ⚠️ {asset_label}: {result}")
+                    else:
+                        indicator = "🟢" if result["available_usd"] >= thr else "🔴"
                         rows.append(t(lang, "status_asset_row",
                             indicator=indicator,
-                            asset_label=s["asset_label"],
-                            available=s["available_usd"],
+                            asset_label=result["asset_label"],
+                            available=result["available_usd"],
                         ))
-                    except Exception as exc:
-                        asset_label = net_cfg["assets"][asset_key]["label"]
-                        rows.append(f"  ⚠️ {asset_label}: {exc}")
             rows.append(t(lang, "status_footer", threshold=thr))
             reply = "\n".join(rows)
 
@@ -505,6 +514,19 @@ async def _monitor(app: Application) -> None:
     fail_streak:  dict[tuple, int]   = {}
     fail_alerted: dict[tuple, bool]  = {}
 
+    async def _try_send(uid, text, uid_pair):
+        try:
+            await _send_to_user(app.bot, uid, text, last_alert, cooldown_key=uid_pair)
+        except Exception as send_exc:
+            log.warning("alert send failed uid=%s: %s", uid, send_exc)
+            from telegram.error import Forbidden
+            if not isinstance(send_exc, Forbidden):
+                await _admin_error(
+                    app.bot,
+                    f"Сбой отправки алерта uid=<code>{uid}</code>: {send_exc}",
+                    last_err, f"send_{uid}",
+                )
+
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
@@ -520,30 +542,20 @@ async def _monitor(app: Application) -> None:
                     if nk in NETWORKS and ak in NETWORKS[nk]["assets"]:
                         needed_pairs.add((nk, ak))
 
-            # Fetch each pair once
+            # Fetch each pair once — all in parallel, non-blocking
+            needed_list = list(needed_pairs)
+            raw = await asyncio.gather(
+                *[asyncio.to_thread(fetch_state, *p) for p in needed_list],
+                return_exceptions=True,
+            )
             results: dict[tuple, dict | Exception] = {}
-            for pair in needed_pairs:
+            for pair, result in zip(needed_list, raw):
                 net_key, asset_key = pair
                 net_label   = NETWORKS[net_key]["label"]
                 asset_label = NETWORKS[net_key]["assets"][asset_key]["label"]
-                try:
-                    results[pair] = fetch_state(net_key, asset_key)
-                    log.info("%s:%s | available=%.2f",
-                             net_key, asset_key, results[pair]["available_usd"])
-
-                    if fail_alerted.get(pair):
-                        await _send_to_user(
-                            app.bot, ADMIN_ID,
-                            t("ru", "alert_recovered",
-                              net_label=net_label, asset_label=asset_label),
-                            last_alert, bypass_cooldown=True,
-                        )
-                        fail_alerted[pair] = False
-                    fail_streak[pair] = 0
-
-                except Exception as exc:
-                    log.error("fetch error [%s:%s]: %s", net_key, asset_key, exc)
-                    results[pair] = exc
+                if isinstance(result, Exception):
+                    log.error("fetch error [%s:%s]: %s", net_key, asset_key, result)
+                    results[pair] = result
                     fail_streak[pair] = fail_streak.get(pair, 0) + 1
                     if fail_streak[pair] >= FAIL_ALERT_AFTER and not fail_alerted.get(pair):
                         try:
@@ -556,8 +568,22 @@ async def _monitor(app: Application) -> None:
                         except Exception as send_err:
                             log.error("admin error alert failed: %s", send_err)
                         fail_alerted[pair] = True
+                else:
+                    results[pair] = result
+                    log.info("%s:%s | available=%.2f",
+                             net_key, asset_key, result["available_usd"])
+                    if fail_alerted.get(pair):
+                        await _send_to_user(
+                            app.bot, ADMIN_ID,
+                            t("ru", "alert_recovered",
+                              net_label=net_label, asset_label=asset_label),
+                            last_alert, bypass_cooldown=True,
+                        )
+                        fail_alerted[pair] = False
+                    fail_streak[pair] = 0
 
-            # Notify users
+            # Notify users — collect all pending alerts, send in parallel
+            alert_coros = []
             for u in users:
                 uid  = u["user_id"]
                 lang = u["lang"]
@@ -571,43 +597,31 @@ async def _monitor(app: Application) -> None:
                     if isinstance(state, Exception) or state is None:
                         continue
 
-                    free      = state["available_usd"]
+                    free        = state["available_usd"]
                     net_label   = state["net_label"]
                     asset_label = state["asset_label"]
-                    is_open   = free >= thr
-                    uid_pair  = (uid, net_key, asset_key)
-                    prev_open = was_open.get(uid_pair, False)
-
-                    try:
-                        if is_open and not prev_open:
-                            await _send_to_user(
-                                app.bot, uid,
-                                t(lang, "alert_open",
-                                  net_label=net_label, asset_label=asset_label,
-                                  threshold=thr, free=free),
-                                last_alert,
-                                cooldown_key=uid_pair,
-                            )
-                        elif prev_open and not is_open:
-                            await _send_to_user(
-                                app.bot, uid,
-                                t(lang, "alert_closed",
-                                  net_label=net_label, asset_label=asset_label,
-                                  threshold=thr, free=free),
-                                last_alert,
-                                cooldown_key=uid_pair,
-                            )
-                    except Exception as send_exc:
-                        log.warning("alert send failed uid=%s: %s", uid, send_exc)
-                        from telegram.error import Forbidden
-                        if not isinstance(send_exc, Forbidden):
-                            await _admin_error(
-                                app.bot,
-                                f"Сбой отправки алерта uid=<code>{uid}</code>: {send_exc}",
-                                last_err, f"send_{uid}",
-                            )
-
+                    is_open     = free >= thr
+                    uid_pair    = (uid, net_key, asset_key)
+                    prev_open   = was_open.get(uid_pair, False)
                     was_open[uid_pair] = is_open
+
+                    if is_open and not prev_open:
+                        alert_coros.append(_try_send(uid,
+                            t(lang, "alert_open",
+                              net_label=net_label, asset_label=asset_label,
+                              threshold=thr, free=free),
+                            uid_pair,
+                        ))
+                    elif prev_open and not is_open:
+                        alert_coros.append(_try_send(uid,
+                            t(lang, "alert_closed",
+                              net_label=net_label, asset_label=asset_label,
+                              threshold=thr, free=free),
+                            uid_pair,
+                        ))
+
+            if alert_coros:
+                await asyncio.gather(*alert_coros, return_exceptions=True)
 
         except Exception as loop_exc:
             log.error("monitor loop error: %s", loop_exc)
