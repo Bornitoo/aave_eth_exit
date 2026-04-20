@@ -9,7 +9,7 @@ users
   first_name     TEXT
   lang           TEXT    DEFAULT 'ru'
   threshold      TEXT    DEFAULT '1000'
-  networks       TEXT    DEFAULT '["mantle"]'  (JSON array of network keys)
+  networks       TEXT    DEFAULT '["mantle:eth"]'  (JSON list of "net:asset" strings)
   first_seen_at  TEXT    (ISO-8601 UTC)
   subscribed_at  TEXT    (ISO-8601 UTC, NULL until confirmed)
   admin_notified INTEGER DEFAULT 0
@@ -21,7 +21,7 @@ from pathlib import Path
 
 DB_FILE = Path("users.db")
 
-DEFAULT_NETWORKS = ["mantle"]
+DEFAULT_SELECTIONS = ["mantle:eth"]
 
 
 def _now() -> str:
@@ -32,6 +32,11 @@ def _con() -> sqlite3.Connection:
     con = sqlite3.connect(DB_FILE)
     con.row_factory = sqlite3.Row
     return con
+
+
+def _migrate(raw: list) -> list:
+    """Convert old-format ["mantle"] entries to new ["mantle:eth"]."""
+    return [item if ":" in item else f"{item}:eth" for item in raw]
 
 
 # ── Init ──────────────────────────────────────────────────────────────────────
@@ -46,15 +51,14 @@ def init() -> None:
                 first_name     TEXT,
                 lang           TEXT    NOT NULL DEFAULT 'ru',
                 threshold      TEXT    NOT NULL DEFAULT '1000',
-                networks       TEXT    NOT NULL DEFAULT '["mantle"]',
+                networks       TEXT    NOT NULL DEFAULT '["mantle:eth"]',
                 first_seen_at  TEXT    NOT NULL,
                 subscribed_at  TEXT,
                 admin_notified INTEGER NOT NULL DEFAULT 0
             )
         """)
-        # migrate existing tables that lack the networks column
         try:
-            con.execute('ALTER TABLE users ADD COLUMN networks TEXT NOT NULL DEFAULT \'["mantle"]\'')
+            con.execute('ALTER TABLE users ADD COLUMN networks TEXT NOT NULL DEFAULT \'["mantle:eth"]\'')
         except sqlite3.OperationalError:
             pass
         con.commit()
@@ -116,11 +120,11 @@ def set_threshold(user_id: int, threshold: str) -> None:
         con.commit()
 
 
-def set_networks(user_id: int, networks: list[str]) -> None:
+def set_selections(user_id: int, selections: list[str]) -> None:
     with _con() as con:
         con.execute(
             "UPDATE users SET networks=? WHERE user_id=?",
-            (json.dumps(networks), user_id),
+            (json.dumps(selections), user_id),
         )
         con.commit()
 
@@ -136,14 +140,15 @@ def get(user_id: int) -> dict | None:
         return dict(row) if row else None
 
 
-def get_networks(user_id: int) -> list[str]:
+def get_selections(user_id: int) -> list[str]:
     row = get(user_id)
     if not row or not row.get("networks"):
-        return list(DEFAULT_NETWORKS)
+        return list(DEFAULT_SELECTIONS)
     try:
-        return json.loads(row["networks"])
+        raw = json.loads(row["networks"])
+        return _migrate(raw)
     except (json.JSONDecodeError, TypeError):
-        return list(DEFAULT_NETWORKS)
+        return list(DEFAULT_SELECTIONS)
 
 
 def active_users() -> list[dict]:
